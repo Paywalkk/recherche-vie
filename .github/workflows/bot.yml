@@ -2,7 +2,7 @@ name: Bot Alerte VIE Horodate
 
 on:
   schedule:
-    - cron: '0 */5 * * *' # S'exécute automatiquement toutes les 5 heures
+      - cron: '*/30 * * * *' # S'exécute automatiquement toutes les 30 minutes
   workflow_dispatch: # Permet d'exécuter le bot à la demande depuis GitHub
 
 # Autorise le bot à pousser les modifications sur le dépôt
