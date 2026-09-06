@@ -1,0 +1,35 @@
+name: Bot Alerte VIE Horodate
+
+on:
+  schedule:
+    - cron: '0 */5 * * *' # S'exécute automatiquement toutes les 5 heures
+  workflow_dispatch: # Permet d'exécuter le bot à la demande depuis GitHub
+
+jobs:
+  run-vie-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v3
+
+      - name: Configuration de Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Installation des dépendances
+        run: pip install -r requirements.txt
+
+      - name: Exécution du bot
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python main.py
+
+      - name: Sauvegarde de l'historique des offres dans GitHub
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action Bot"
+          git add jobs_seen.json
+          git commit -m "Mise à jour automatique des offres vues [skip ci]" || exit 0
+          git push
