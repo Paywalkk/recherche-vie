@@ -6,7 +6,6 @@ import time
 from typing import Any, Dict, List, Set
 import requests
 
-# Import de la nouvelle bibliothèque officielle Google GenAI
 try:
   from google import genai
   from google.genai import types
@@ -36,7 +35,7 @@ gemini_client = (
 
 
 # ---------------------------------------------------------------------------
-# GESTION DE LA BASE DE DONNÉES LOCALE (OBLIGATOIRE POUR ÉVITER LES DOUBLONS)
+# GESTION DE LA BASE DE DONNÉES LOCALE
 # ---------------------------------------------------------------------------
 def load_seen_jobs() -> Set[str]:
   """Charge la liste des identifiants d'offres déjà traitées."""
@@ -45,7 +44,7 @@ def load_seen_jobs() -> Set[str]:
       with open(DB_FILE, "r", encoding="utf-8") as f:
         return set(json.load(f))
     except Exception as e:
-      logger.error(f"Erreur lors de la lecture de {DB_FILE}: {e}")
+      logger.error(f"Erreur lors de la lecture de {DB_FILE} : {e}")
   return set()
 
 
@@ -54,36 +53,33 @@ def save_seen_jobs(seen_jobs: Set[str]) -> None:
   try:
     with open(DB_FILE, "w", encoding="utf-8") as f:
       json.dump(list(seen_jobs), f, ensure_ascii=False, indent=2)
-    logger.info(
-        f"Base de données mise à jour ({len(seen_jobs)} offres enregistrées au"
-        " total)."
-    )
+    logger.info(f"Base de données mise à jour ({len(seen_jobs)} offres vues).")
   except Exception as e:
-    logger.error(f"Erreur lors de la sauvegarde dans {DB_FILE}: {e}")
+    logger.error(f"Erreur lors de la sauvegarde dans {DB_FILE} : {e}")
 
 
 # ---------------------------------------------------------------------------
-# ANALYSE DE L'OFFRE VIA GEMINI 2.5 FLASH
+# ANALYSE IA (GEMINI 2.5 FLASH)
 # ---------------------------------------------------------------------------
 def evaluate_job_with_ai(
     company: str, title: str, location: str, description: str
 ) -> Dict[str, Any]:
-  """Envoie la description de l'offre à l'IA Gemini pour filtrage et scoring."""
+  """Analyse l'offre avec Gemini pour vérifier le profil et le lieu."""
   if not gemini_client:
     logger.warning("Clé API Gemini absente. Validation basique appliquée.")
     return {
         "pertinent": True,
         "score": 5,
-        "raison": "Validation par défaut (Clé API Gemini non configurée).",
+        "raison": "Validation par défaut (pas de clé API Gemini).",
         "tags": ["V.I.E"],
     }
 
   prompt = f"""
-Tu es un expert en recrutement d'ingénieurs. Ton rôle est d'analyser une offre d'emploi V.I.E et de déterminer si elle correspond précisément au profil de l'ingénieur.
+Tu es un expert en recrutement d'ingénieurs. Ton rôle est d'analyser une offre d'emploi V.I.E et de déterminer si elle correspond au profil recherché.
 
 --- CRITÈRES STRICTS DU CANDIDAT ---
 1. STATUT : V.I.E uniquement.
-2. DOMAINES TECHNIQUES RECHERCHÉS (au moins un nécessaire) :
+2. DOMAINES TECHNIQUES RECHERCHÉS (au moins un) :
    - Essais & Mise en service (Commissioning)
    - Méthodes / Industrialisation / Procédés
    - Qualité / Assurance Qualité
@@ -95,7 +91,7 @@ Tu es un expert en recrutement d'ingénieurs. Ton rôle est d'analyser une offre
    - REJETER IMMÉDIATEMENT toute offre située en Europe (France, Allemagne, Espagne, Italie, Belgique, Suisse, Royaume-Uni, etc.).
 4. EXCLUSIONS ABSOLUES :
    - Métiers non-ingénieurs : Commerce, Sales, Business Development, Achats, RH, Recrutement, Finance, Comptabilité, Marketing, Support informatique/Helpdesk.
-   - Stages, alternances, CDD/CDI classiques hors dispositif V.I.E.
+   - Stages, alternances, CDD/CDI classiques hors statut V.I.E.
 
 --- DÉTAILS DE L'OFFRE ---
 Entreprise : {company}
@@ -106,7 +102,7 @@ Description : {description[:3000]}
 
   try:
     response = gemini_client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.6-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
@@ -120,17 +116,12 @@ Description : {description[:3000]}
                     },
                     "raison": {
                         "type": "STRING",
-                        "description": (
-                            "Explication en une phrase concise de la décision"
-                        ),
+                        "description": "Explication en une phrase simple",
                     },
                     "tags": {
                         "type": "ARRAY",
                         "items": {"type": "STRING"},
-                        "description": (
-                            "2 à 4 tags pertinents (ex: Essais, Afrique,"
-                            " Ferroviaire, Matériaux)"
-                        ),
+                        "description": "2 à 4 tags pertinents",
                     },
                 },
                 "required": ["pertinent", "score", "raison", "tags"],
@@ -161,16 +152,16 @@ def send_discord_alert(
     raison: str,
     tags: List[str],
 ) -> None:
-  """Envoie un message enrichi (Embed) sur le salon Discord."""
+  """Envoie une alerte enrichie sur Discord."""
   if not DISCORD_WEBHOOK_URL:
     logger.warning("DISCORD_WEBHOOK_URL non renseigné. Alerte non envoyée.")
     return
 
   color = 0x3498DB  # Bleu par défaut
   if score >= 8:
-    color = 0x2ECC71  # Vert (Excellente opportunité)
+    color = 0x2ECC71  # Vert
   elif score >= 6:
-    color = 0xF1C40F  # Jaune (Bonne opportunité)
+    color = 0xF1C40F  # Jaune
 
   tags_str = (
       " ".join([f"`{t}`" for t in tags]) if tags else "`Ingénieur` `V.I.E`"
@@ -191,7 +182,7 @@ def send_discord_alert(
           {"name": "🏷️ Tags", "value": tags_str, "inline": False},
           {"name": "💡 Analyse IA", "value": raison, "inline": False},
       ],
-      "footer": {"text": "Bot Alerte V.I.E • Business France & Grands Groupes"},
+      "footer": {"text": "Bot Alerte V.I.E • Business France & Corporate ATS"},
       "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
   }
 
@@ -219,10 +210,10 @@ def send_discord_alert(
 
 
 # ---------------------------------------------------------------------------
-# RECUPERATION DES OFFRES DEPUIS L'API BUSINESS FRANCE
+# SOURCE 1 : BUSINESS FRANCE API
 # ---------------------------------------------------------------------------
 def fetch_business_france_jobs(seen_jobs: Set[str]) -> None:
-  """Interroge l'API de Business France pour récupérer les nouvelles offres."""
+  """Interroge la plateforme officielle Business France."""
   api_url = "https://mon-vie-via.businessfrance.fr/api/offers/search"
   headers = {
       "User-Agent": (
@@ -231,7 +222,6 @@ def fetch_business_france_jobs(seen_jobs: Set[str]) -> None:
       "Content-Type": "application/json",
   }
 
-  # Mots-clés de recherche couvrant l'ingénierie et les entreprises cibles
   search_queries = [
       "Ingénieur",
       "Essais",
@@ -247,7 +237,7 @@ def fetch_business_france_jobs(seen_jobs: Set[str]) -> None:
   ]
 
   for query in search_queries:
-    logger.info(f"Recherche Business France avec le mot-clé : '{query}'")
+    logger.info(f"[Business France] Recherche mot-clé : '{query}'")
     payload = {"query": query, "limit": 40, "page": 1}
 
     try:
@@ -265,19 +255,18 @@ def fetch_business_france_jobs(seen_jobs: Set[str]) -> None:
           if not offer_id or job_key in seen_jobs:
             continue
 
-          # Marquer l'offre comme vue
           seen_jobs.add(job_key)
 
           company = (
               offer.get("companyName")
               or offer.get("organizationName")
-              or "Entreprise Partenaire"
+              or "Business France"
           )
           title = offer.get("title") or offer.get("jobTitle") or "Poste V.I.E"
           location = (
               offer.get("country")
               or offer.get("cityName")
-              or "Destination Internationale"
+              or "International"
           )
           desc = (
               offer.get("description")
@@ -286,7 +275,6 @@ def fetch_business_france_jobs(seen_jobs: Set[str]) -> None:
           )
           url = f"https://mon-vie-via.businessfrance.fr/offre/{offer_id}"
 
-          # Analyse IA
           analysis = evaluate_job_with_ai(company, title, location, desc)
 
           if analysis.get("pertinent") and analysis.get("score", 0) >= 6:
@@ -296,30 +284,113 @@ def fetch_business_france_jobs(seen_jobs: Set[str]) -> None:
                 location=location,
                 url=url,
                 score=analysis.get("score", 7),
-                raison=analysis.get("raison", "Offre correspondant au profil."),
+                raison=analysis.get("raison", "Offre pertinente."),
                 tags=analysis.get("tags", []),
             )
-            time.sleep(1)  # Petite pause pour respecter les limites Discord
-      else:
-        logger.warning(
-            f"API Business France a répondu avec le code {response.status_code}"
-        )
+            time.sleep(1)
     except Exception as e:
-      logger.error(
-          f"Erreur lors de la requête Business France pour '{query}' : {e}"
-      )
+      logger.error(f"[Business France] Erreur pour '{query}' : {e}")
 
 
 # ---------------------------------------------------------------------------
-# POINT D'ENTRÉE PRINCIPAL
+# SOURCE 2 : SITES CARRIÈRES WORKDAY (ALSTOM, AIRBUS, ETC.)
 # ---------------------------------------------------------------------------
-if __name__ == "__main__":
+def check_workday_jobs(
+    company_name: str, domain: str, path: str, seen_jobs: Set[str]
+) -> None:
+  """Interroge directement l'API d'un portail Workday entreprise."""
+  api_url = f"https://{domain}.myworkdayjobs.com/wday/cxs/{domain}/{path}/jobs"
+  headers = {
+      "Content-Type": "application/json",
+      "User-Agent": (
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      ),
+  }
+  payload = {
+      "appliedFacets": {},
+      "limit": 20,
+      "offset": 0,
+      "searchText": "VIE",
+  }
+
+  try:
+    logger.info(f"[Workday] Recherche directe chez {company_name}...")
+    res = requests.post(api_url, json=payload, headers=headers, timeout=15)
+    if res.status_code == 200:
+      data = res.json()
+      job_postings = data.get("jobPostings", [])
+
+      for job in job_postings:
+        bullet_fields = job.get("bulletFields", [])
+        ext_id = bullet_fields[0] if bullet_fields else job.get("title")
+        job_key = f"WD_{company_name}_{job.get('title')}_{ext_id}"
+
+        if job_key in seen_jobs:
+          continue
+
+        seen_jobs.add(job_key)
+
+        title = job.get("title", "")
+        location = job.get("locationsText") or job.get(
+            "location", "Non renseigné"
+        )
+        relative_url = job.get("externalPath", "")
+        full_url = (
+            f"https://{domain}.myworkdayjobs.com/fr-FR/{path}{relative_url}"
+        )
+
+        desc = (
+            f"Offre publiée directement sur le portail carrières de"
+            f" {company_name}.\nTitre : {title}\nLieu : {location}"
+        )
+
+        analysis = evaluate_job_with_ai(company_name, title, location, desc)
+
+        if analysis.get("pertinent") and analysis.get("score", 0) >= 6:
+          send_discord_alert(
+              company=company_name,
+              title=f"[Exclusif Site] {title}",
+              location=location,
+              url=full_url,
+              score=analysis.get("score", 7),
+              raison=analysis.get("raison", "Publication directe sur le site."),
+              tags=analysis.get("tags", ["Direct Site"]),
+          )
+          time.sleep(1)
+  except Exception as e:
+    logger.error(f"[Workday] Erreur chez {company_name} : {e}")
+
+
+# ---------------------------------------------------------------------------
+# FONCTION PRINCIPALE
+# ---------------------------------------------------------------------------
+def main():
   logger.info("=== Démarrage du Bot d'Alerte V.I.E ===")
+
+  # 1. Chargement de l'historique
   seen_jobs = load_seen_jobs()
 
-  # Recherche d'offres
+  # 2. Exécution des scrapers
   fetch_business_france_jobs(seen_jobs)
 
-  # Sauvegarde de l'état
+  # Scrapers directs Workday
+  check_workday_jobs(
+      company_name="Alstom",
+      domain="alstom",
+      path="Alstom_Careers",
+      seen_jobs=seen_jobs,
+  )
+  check_workday_jobs(
+      company_name="Airbus",
+      domain="airbus",
+      path="Airbus",
+      seen_jobs=seen_jobs,
+  )
+
+  # 3. Sauvegarde de l'historique mis à jour
   save_seen_jobs(seen_jobs)
   logger.info("=== Exécution terminée avec succès ===")
+
+
+if __name__ == "__main__":
+  main()
